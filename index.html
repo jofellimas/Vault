@@ -1017,7 +1017,7 @@ tbody td{padding:12px 18px;font-size:.84rem;color:var(--text2);vertical-align:mi
           <div class="rrow"><span class="rrow-label">Total de despesas</span><span class="rrow-val" style="color:var(--red)" id="rExpenses">R$ 0,00</span></div>
           <div class="rrow"><span class="rrow-label">Fundo de emergência (mês)</span><span class="rrow-val" style="color:var(--blue)" id="rFund">R$ 0,00</span></div>
           <div class="rrow"><span class="rrow-label">Taxa de poupança</span><span class="rrow-val" id="rSavRate">0%</span></div>
-          <div class="rrow"><span class="rrow-label" style="font-weight:600;color:var(--text)">Saldo disponível</span><span class="rrow-val" id="rBalance" style="font-size:1.05rem">R$ 0,00</span></div>
+          <div class="rrow"><span class="rrow-label" style="font-weight:600;color:var(--text)" id="rBalanceLabel">Saldo disponível</span><span class="rrow-val" id="rBalance" style="font-size:1.05rem">R$ 0,00</span></div>
         </div>
         <div class="r-block">
           <div class="r-block-title">Despesas por categoria</div>
@@ -1277,9 +1277,20 @@ function calcTotals() {
   const tg = gains.reduce((s,x)=>s+x.value,0);
   const te = expenses.reduce((s,x)=>s+x.value,0);
   const tf = fund.reduce((s,x)=>s+x.value,0);
-  const balance = tg - te - tf;
+
+  // Saldo acumulado dos meses anteriores ao mês visualizado
+  const curMonth = nowMonth();
+  const prevGains    = S.gains.filter(x => x.date && monthOf(x.date) < curMonth);
+  const prevExpenses = S.expenses.filter(x => x.date && monthOf(x.date) < curMonth);
+  const prevFund     = S.fund.filter(x => x.date && monthOf(x.date) < curMonth);
+  const prevBalance  = prevGains.reduce((s,x)=>s+x.value,0)
+                     - prevExpenses.reduce((s,x)=>s+x.value,0)
+                     - prevFund.reduce((s,x)=>s+x.value,0);
+
+  const balance = prevBalance + tg - te - tf;
+  const monthBalance = tg - te - tf; // só o mês atual, para o limite diário
   const dl = daysLeftInMonth();
-  const daily = dl > 0 ? Math.max(0, balance/dl) : 0;
+  const daily = dl > 0 ? Math.max(0, monthBalance/dl) : 0;
   return { tg, te, tf, balance, daily, dl };
 }
 
@@ -1300,7 +1311,7 @@ function showPanel(name) {
   document.getElementById('topbarTitle').textContent = PANEL_NAMES[name] || name;
   // Trigger panel-specific renders
   if (name === 'dashboard') { requestAnimationFrame(()=>{ drawLineChart(); drawDonut(); }); }
-  if (name === 'report')  { buildReport(); requestAnimationFrame(()=>{ drawLineChart(); drawDonut(); }); }
+  if (name === 'report')  { buildReport(); } // buildReport já redesenha os gráficos internamente
   if (name === 'budget')  buildBudget();
   if (name === 'goals')   buildGoals();
   if (name === 'fund')    renderFund();
@@ -1462,10 +1473,13 @@ function fullRefresh() {
   buildBudget();
   // only re-draw charts if dashboard is visible
   const authHidden = document.getElementById('authScreen').style.display === 'none';
-  if (authHidden && (
-      document.getElementById('panel-dashboard').classList.contains('active') ||
-      document.getElementById('panel-report').classList.contains('active'))) {
-    requestAnimationFrame(() => { drawLineChart(); drawDonut(); });
+  if (authHidden) {
+    if (document.getElementById('panel-dashboard').classList.contains('active')) {
+      requestAnimationFrame(() => { drawLineChart(); drawDonut(); });
+    }
+    if (document.getElementById('panel-report').classList.contains('active')) {
+      buildReport();
+    }
   }
   renderRecentTable();
 }
@@ -1830,11 +1844,11 @@ function addBudget() {
 // ══════════════════════════════════════════
 // DELETE
 // ══════════════════════════════════════════
-function delGain(id)    { S.gains    = S.gains.filter(x=>x.id!==id);    save(); renderGains();    recalc(); renderRecentTable(); toast('Removido','🗑'); }
-function delExpense(id) { S.expenses = S.expenses.filter(x=>x.id!==id); save(); renderExpenses(); recalc(); renderRecentTable(); toast('Removido','🗑'); }
-function delFund(id)    { S.fund     = S.fund.filter(x=>x.id!==id);     save(); renderFund();     recalc(); renderRecentTable(); toast('Removido','🗑'); }
-function delGoal(id)    { S.goals    = S.goals.filter(x=>x.id!==id);    save(); buildGoals();                                    toast('Meta removida','🗑'); }
-function delBudget(id)  { S.budgets  = S.budgets.filter(x=>x.id!==id);  save(); buildBudget();                                   toast('Orçamento removido','🗑'); }
+function delGain(id)    { if(!confirm('Remover este ganho?'))    return; S.gains    = S.gains.filter(x=>x.id!==id);    save(); renderGains();    recalc(); renderRecentTable(); toast('Removido','🗑'); }
+function delExpense(id) { if(!confirm('Remover esta despesa?'))  return; S.expenses = S.expenses.filter(x=>x.id!==id); save(); renderExpenses(); recalc(); renderRecentTable(); toast('Removido','🗑'); }
+function delFund(id)    { if(!confirm('Remover este depósito?')) return; S.fund     = S.fund.filter(x=>x.id!==id);     save(); renderFund();     recalc(); renderRecentTable(); toast('Removido','🗑'); }
+function delGoal(id)    { if(!confirm('Remover esta meta?'))     return; S.goals    = S.goals.filter(x=>x.id!==id);    save(); buildGoals();                                    toast('Meta removida','🗑'); }
+function delBudget(id)  { if(!confirm('Remover este orçamento?'))return; S.budgets  = S.budgets.filter(x=>x.id!==id);  save(); buildBudget();                                   toast('Orçamento removido','🗑'); }
 
 // ══════════════════════════════════════════
 // RENDER — GAINS TABLE
@@ -2003,20 +2017,59 @@ function buildReport() {
   const m = nowMonth();
   const { tg, te, tf, balance, daily, dl } = calcTotals();
 
+  // Saldo apenas do mês atual (sem acumulado anterior), para o spotlight
+  const monthBalance = tg - te - tf;
+
+  // ── Resumo do mês ──
   document.getElementById('rGains').textContent    = R$(tg);
   document.getElementById('rExpenses').textContent = R$(te);
   document.getElementById('rFund').textContent     = R$(tf);
+
+  // Saldo acumulado (inclui meses anteriores)
   document.getElementById('rBalance').textContent  = R$(balance);
   document.getElementById('rBalance').style.color  = balance >= 0 ? 'var(--green)' : 'var(--red)';
-  document.getElementById('rSavRate').textContent  = tg > 0 ? ((tg-te)/tg*100).toFixed(0)+'%' : '0%';
-  document.getElementById('reportDaily').textContent   = dl > 0 ? R$(daily) : 'Mês encerrado';
-  document.getElementById('reportDaysLeft').textContent= dl;
-  document.getElementById('reportDailyMeta').textContent = dl > 0
-    ? `${R$(balance)} ÷ ${dl} dias = ${R$(daily)}/dia`
-    : 'Navegue para um mês em aberto';
+
+  // Taxa de poupança: quanto do ganho do mês virou saldo líquido
+  const savRate = tg > 0 ? ((tg - te - tf) / tg * 100) : 0;
+  const savEl = document.getElementById('rSavRate');
+  savEl.textContent = tg > 0 ? savRate.toFixed(0) + '%' : '—';
+  savEl.style.color = savRate >= 20 ? 'var(--green)' : savRate >= 0 ? 'var(--orange)' : 'var(--red)';
+
+  // ── Spotlight: limite diário ──
+  const isCurrent = new Date().getMonth() === S.vm && new Date().getFullYear() === S.vy;
+  if (isCurrent && dl > 0) {
+    document.getElementById('reportDaily').textContent    = R$(daily);
+    document.getElementById('reportDaysLeft').textContent = dl;
+    document.getElementById('reportDailyMeta').textContent =
+      `Saldo do mês ${R$(monthBalance)} ÷ ${dl} dias restantes`;
+  } else if (!isCurrent) {
+    document.getElementById('reportDaily').textContent    = '—';
+    document.getElementById('reportDaysLeft').textContent = '—';
+    document.getElementById('reportDailyMeta').textContent = 'Mês já encerrado — sem limite diário';
+  } else {
+    document.getElementById('reportDaily').textContent    = 'Último dia';
+    document.getElementById('reportDaysLeft').textContent = '0';
+    document.getElementById('reportDailyMeta').textContent = 'Hoje é o último dia do mês';
+  }
+
   document.getElementById('reportSub').textContent = `${MONTHS[S.vm]} ${S.vy} — Análise completa`;
 
-  // Category breakdown
+  // ── Label do saldo: deixa claro se há carry-over ──
+  const curMonth = nowMonth();
+  const prevGains    = S.gains.filter(x => x.date && monthOf(x.date) < curMonth);
+  const prevExpenses = S.expenses.filter(x => x.date && monthOf(x.date) < curMonth);
+  const prevFund     = S.fund.filter(x => x.date && monthOf(x.date) < curMonth);
+  const prevBalance  = prevGains.reduce((s,x)=>s+x.value,0)
+                     - prevExpenses.reduce((s,x)=>s+x.value,0)
+                     - prevFund.reduce((s,x)=>s+x.value,0);
+  const balLabelEl = document.getElementById('rBalanceLabel');
+  if (balLabelEl) {
+    balLabelEl.textContent = prevBalance !== 0
+      ? `Saldo acumulado (inclui ${R$(prevBalance)} de meses anteriores)`
+      : 'Saldo disponível';
+  }
+
+  // ── Despesas por categoria ──
   const cats = {};
   S.expenses.filter(x=>monthOf(x.date)===m).forEach(e => { cats[e.category]=(cats[e.category]||0)+e.value; });
   const catBreak = document.getElementById('categoryBreakdown');
@@ -2033,17 +2086,20 @@ function buildReport() {
     }).join('');
   }
 
-  // Top gains
+  // ── Top ganhos ──
   const topG = S.gains.filter(x=>monthOf(x.date)===m).sort((a,b)=>b.value-a.value).slice(0,5);
   document.getElementById('topGainsReport').innerHTML = topG.length
     ? topG.map(x=>`<div class="rrow"><span class="rrow-label">${x.origin}</span><span class="rrow-val" style="color:var(--green)">${R$(x.value)}</span></div>`).join('')
     : '<div style="color:var(--text3);font-size:.84rem;padding:10px 0">Sem dados</div>';
 
-  // Top expenses
+  // ── Top despesas ──
   const topE = S.expenses.filter(x=>monthOf(x.date)===m).sort((a,b)=>b.value-a.value).slice(0,5);
   document.getElementById('topExpReport').innerHTML = topE.length
     ? topE.map(x=>`<div class="rrow"><span class="rrow-label">${x.description||x.category}</span><span class="rrow-val" style="color:var(--red)">${R$(x.value)}</span></div>`).join('')
     : '<div style="color:var(--text3);font-size:.84rem;padding:10px 0">Sem dados</div>';
+
+  // ── Redesenha gráficos com delay para garantir que o painel está visível ──
+  setTimeout(() => { drawLineChart(); drawDonut(); }, 60);
 }
 
 // ══════════════════════════════════════════
@@ -2415,7 +2471,68 @@ function checkMobile() {
 // ══════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════
+function ensureTestUser() {
+  const users = getUsers();
+  const email = 'test@test.com';
+  if (users.find(u => u.email === email)) return; // já existe
+
+  const id = 'testuser001';
+  const newUser = { id, name: 'Usuário Teste', email, passHash: simpleHash('123456') };
+  users.push(newUser);
+  saveUsers(users);
+
+  // Seed de dados de exemplo
+  const today = new Date();
+  const m = (d) => {
+    const dt = new Date(today.getFullYear(), today.getMonth(), d);
+    return dt.toISOString().slice(0, 10);
+  };
+  const pm = (d) => {
+    const dt = new Date(today.getFullYear(), today.getMonth() - 1, d);
+    return dt.toISOString().slice(0, 10);
+  };
+
+  const seed = {
+    gains: [
+      { id: 1, date: m(1),  origin: 'Salário',      category: 'Salário',      value: 5000 },
+      { id: 2, date: m(10), origin: 'Freelance web', category: 'Freelance',    value: 1200 },
+      { id: 3, date: pm(1), origin: 'Salário',       category: 'Salário',      value: 5000 },
+      { id: 4, date: pm(15),origin: 'Venda notebook',category: 'Venda',        value: 800  },
+    ],
+    expenses: [
+      { id: 10, date: m(2),  description: 'Supermercado',   category: 'Alimentação', value: 480  },
+      { id: 11, date: m(5),  description: 'Uber',           category: 'Transporte',  value: 120  },
+      { id: 12, date: m(7),  description: 'Netflix',        category: 'Assinaturas', value: 55   },
+      { id: 13, date: m(8),  description: 'Farmácia',       category: 'Saúde',       value: 95   },
+      { id: 14, date: m(10), description: 'Restaurante',    category: 'Alimentação', value: 210  },
+      { id: 15, date: m(12), description: 'Aluguel',        category: 'Moradia',     value: 1400 },
+      { id: 16, date: pm(3), description: 'Supermercado',   category: 'Alimentação', value: 520  },
+      { id: 17, date: pm(5), description: 'Conta de luz',   category: 'Moradia',     value: 180  },
+      { id: 18, date: pm(10),description: 'Aluguel',        category: 'Moradia',     value: 1400 },
+    ],
+    fund: [
+      { id: 20, date: m(1),  desc: 'Reserva mensal', value: 500 },
+      { id: 21, date: pm(1), desc: 'Reserva mensal', value: 500 },
+    ],
+    goals: [
+      { id: 30, name: 'Viagem Europa', icon: '✈️', target: 15000, current: 3200, deadline: new Date(today.getFullYear(), today.getMonth()+8, 1).toISOString().slice(0,10), created: pm(1) },
+      { id: 31, name: 'MacBook Pro',   icon: '💻', target: 12000, current: 5500, deadline: new Date(today.getFullYear(), today.getMonth()+4, 1).toISOString().slice(0,10), created: pm(1) },
+    ],
+    budgets: [
+      { id: 40, category: 'Alimentação', month: m(1).slice(0,7), limit: 700  },
+      { id: 41, category: 'Moradia',     month: m(1).slice(0,7), limit: 1500 },
+      { id: 42, category: 'Transporte',  month: m(1).slice(0,7), limit: 200  },
+    ],
+    fundGoal: 18000,
+    vm: today.getMonth(),
+    vy: today.getFullYear(),
+  };
+
+  localStorage.setItem('vault3_' + id, JSON.stringify(seed));
+}
+
 function init() {
+  ensureTestUser();
   checkMobile();
 
   window.addEventListener('resize', () => {
